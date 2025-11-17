@@ -1,0 +1,119 @@
+import numpy as np
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.decomposition import TruncatedSVD
+from sklearn.metrics import mean_squared_error
+from math import sqrt
+
+# ---------------------------------------------------------
+#  SAMPLE PRODUCT DATASET (You can replace with your own)
+# ---------------------------------------------------------
+products = [
+    {"item_id": 0, "title": "Wireless Headphones", "description": "Bluetooth headphones with noise cancellation"},
+    {"item_id": 1, "title": "Smartphone Case", "description": "Shockproof smartphone case with rubber grip"},
+    {"item_id": 2, "title": "Running Shoes", "description": "Lightweight running shoes for daily exercise"},
+    {"item_id": 3, "title": "LED Monitor", "description": "27-inch LED monitor with HD resolution"},
+    {"item_id": 4, "title": "Coffee Maker", "description": "Automatic drip coffee maker with timer"},
+    {"item_id": 5, "title": "Yoga Mat", "description": "Eco-friendly yoga mat with non-slip surface"},
+    {"item_id": 6, "title": "Electric Kettle", "description": "Stainless steel electric kettle with auto shutoff"},
+    {"item_id": 7, "title": "Gaming Mouse", "description": "RGB gaming mouse with high precision sensor"},
+    {"item_id": 8, "title": "Backpack", "description": "Waterproof backpack for travel and work"},
+    {"item_id": 9, "title": "Bluetooth Speaker", "description": "Portable speaker with deep bass"},
+]
+
+products_df = pd.DataFrame(products)
+
+# ---------------------------------------------------------
+#  SAMPLE USER RATINGS (user_id, item_id, rating)
+# ---------------------------------------------------------
+ratings = [
+    {"user_id": 0, "item_id": 0, "rating": 5},
+    {"user_id": 0, "item_id": 1, "rating": 4},
+    {"user_id": 0, "item_id": 3, "rating": 5},
+
+    {"user_id": 1, "item_id": 2, "rating": 4},
+    {"user_id": 1, "item_id": 5, "rating": 5},
+    {"user_id": 1, "item_id": 8, "rating": 3},
+
+    {"user_id": 2, "item_id": 0, "rating": 3},
+    {"user_id": 2, "item_id": 3, "rating": 4},
+    {"user_id": 2, "item_id": 9, "rating": 5},
+
+    {"user_id": 3, "item_id": 1, "rating": 5},
+    {"user_id": 3, "item_id": 7, "rating": 4},
+    {"user_id": 3, "item_id": 8, "rating": 4},
+]
+
+ratings_df = pd.DataFrame(ratings)
+
+# ---------------------------------------------------------
+#  COLLABORATIVE FILTERING (SVD)
+# ---------------------------------------------------------
+user_item_matrix = ratings_df.pivot_table(index="user_id", columns="item_id", values="rating")
+
+# Fill missing values with user mean
+user_means = user_item_matrix.mean(axis=1)
+ui_filled = user_item_matrix.apply(
+    lambda row: row.fillna(row.mean()), axis=1
+)
+
+# SVD decomposition
+svd = TruncatedSVD(n_components=3, random_state=42)
+U = svd.fit_transform(ui_filled.values)
+VT = svd.components_
+
+# Reconstruct predicted ratings
+pred_matrix = np.dot(U, VT)
+
+# ---------------------------------------------------------
+#  CONTENT-BASED FILTERING (TF-IDF)
+# ---------------------------------------------------------
+tfidf = TfidfVectorizer(stop_words="english")
+item_tfidf = tfidf.fit_transform(products_df["description"])
+
+# ---------------------------------------------------------
+#  HYBRID RECOMMENDER
+# ---------------------------------------------------------
+def recommend(user_id, top_k=5, cf_weight=0.6, cb_weight=0.4):
+
+    # Collaborative scores
+    cf_scores = pred_matrix[user_id]
+
+    # Content-based user profile
+    user_rated = ratings_df[ratings_df["user_id"] == user_id]
+    liked_items = user_rated[user_rated["rating"] >= 4]["item_id"].values
+
+    if len(liked_items) > 0:
+        user_profile = item_tfidf[liked_items].mean(axis=0)
+        cb_scores = cosine_similarity(user_profile, item_tfidf).flatten()
+    else:
+        cb_scores = np.zeros(len(products_df))
+
+    # Normalize
+    def normalize(x):
+        return (x - np.min(x)) / (np.max(x) - np.min(x) + 1e-6)
+
+    hybrid_score = cf_weight * normalize(cf_scores) + cb_weight * normalize(cb_scores)
+
+    # Exclude items already rated
+    rated_items = set(user_rated["item_id"].values)
+    products_df["score"] = hybrid_score
+    recs = products_df[~products_df["item_id"].isin(rated_items)]
+
+    return recs.sort_values("score", ascending=False).head(top_k)
+
+# ---------------------------------------------------------
+#  SHOW RECOMMENDATIONS
+# ---------------------------------------------------------
+print("\n=== 🔍 Recommendations for USER 0 ===")
+print(recommend(0, top_k=5)[["item_id", "title", "score"]])
+
+print("\n=== 🔍 Recommendations for USER 1 ===")
+print(recommend(1, top_k=5)[["item_id", "title", "score"]])
+
+print("\n=== 🔍 Recommendations for USER 2 ===")
+print(recommend(2, top_k=5)[["item_id", "title", "score"]])
+
+print("\n=== 🔍 Recommendations for USER 3 ===")
+print(recommend(3, top_k=5)[["item_id", "title", "score"]])
